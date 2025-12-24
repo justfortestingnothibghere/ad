@@ -63,6 +63,12 @@ def init_db():
 def get_conn():
     return sqlite3.connect(config.DB_FILE)
 
+def update_service_column(service_id, column, value):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(f'UPDATE services SET {column} = ? WHERE service_id = ?', (value, service_id))
+    conn.commit()
+    conn.close()
 
 # ---------------------------
 # Migration (ADD NEW COLUMNS)
