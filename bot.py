@@ -63,22 +63,43 @@ def command_handler(func):
 def handle_document(message: Message):
     user_id = message.from_user.id
     if user_id not in user_states:
-        bot.reply_to(message, "Unexpected file. Use a command first.")
+        bot.reply_to(message, "Unexpected file. Use a command first (e.g., /deploy).")
         return
     
+    # Check if it's a ZIP file
+    if not message.document.file_name.lower().endswith('.zip'):
+        bot.reply_to(message, "Please upload a .zip file only.")
+        del user_states[user_id]
+        return
+
     state = user_states[user_id]
     file_info = bot.get_file(message.document.file_id)
-    zip_path = f'temp_{user_id}.zip'
-    downloaded_file = bot.download_file(file_info.file_path, zip_path)
+    
+    # Download file as bytes (new correct way)
+    try:
+        downloaded_file = bot.download_file(file_info.file_path)
+    except Exception as e:
+        bot.reply_to(message, f"Failed to download file: {str(e)}")
+        del user_states[user_id]
+        return
+    
+    # Save to temporary ZIP path
+    zip_path = f'temp_{user_id}_{int(time.time())}.zip'
+    try:
+        with open(zip_path, 'wb') as f:
+            f.write(downloaded_file)
+    except Exception as e:
+        bot.reply_to(message, f"Failed to save file: {str(e)}")
+        del user_states[user_id]
+        return
+    
+    bot.reply_to(message, "File received! Processing your deployment..." if 'deploy' in state else "File received! Updating your project...")
     
     if state == 'waiting_deploy':
-        # Thread the deployment to avoid blocking
         threading.Thread(target=deploy_project, args=(user_id, zip_path, bot, message.chat.id)).start()
-        bot.reply_to(message, "Processing your deployment...")
     elif state.startswith('waiting_update_'):
         service_id = state.split('_')[2]
         threading.Thread(target=update_project, args=(user_id, service_id, zip_path, bot, message.chat.id)).start()
-        bot.reply_to(message, "Processing your update...")
     
     del user_states[user_id]
 
