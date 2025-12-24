@@ -11,11 +11,6 @@ from database import *
 from deployment import *
 from utils import *
 
-import dns.resolver  # pip install dnspython
-import time
-from nginx_manager import create_nginx_config, remove_nginx_config
-from database import get_service, update_service_column  # You'll need to add helper for updates
-
 # Setup logging
 os.makedirs(config.LOGS_DIR, exist_ok=True)
 logging.basicConfig(filename=os.path.join(config.LOGS_DIR, 'system.log'), level=logging.INFO,
@@ -107,86 +102,6 @@ def handle_document(message: Message):
         threading.Thread(target=update_project, args=(user_id, service_id, zip_path, bot, message.chat.id)).start()
     
     del user_states[user_id]
-
-@bot.message_handler(commands=['customdomain'])
-@command_handler
-def handle_customdomain(message: Message):
-    if message.from_user.id != config.ADMIN_ID and not add_or_get_user(message.from_user.id)['is_premium']:
-        bot.reply_to(message, "This feature is premium-only!")
-        return
-    
-    parts = message.text.split()
-    if len(parts) < 3:
-        bot.reply_to(message, "Usage: /customdomain SERVICE_ID yourdomain.com")
-        return
-    
-    service_id = parts[1]
-    domain = parts[2].lower().strip()
-    
-    service = get_service(service_id)
-    if not service or service['user_id'] != message.from_user.id:
-        bot.reply_to(message, "Invalid service or not yours.")
-        return
-    
-    if service.get('custom_domain'):
-        bot.reply_to(message, f"Already has domain: {service['custom_domain']}")
-        return
-    
-    token = f"deployx-verify-{generate_service_id()}"  # Reuse your generate_service_id()
-    
-    update_service_column(service_id, 'custom_domain', domain)
-    update_service_column(service_id, 'verification_token', token)
-    update_service_column(service_id, 'domain_verified', False)
-    
-    bot.reply_to(message, f"""
-Custom domain set: {domain}
-
-To verify ownership:
-1. Go to your domain DNS settings.
-2. Add TXT record:
-   Host: _deployx-verify.{domain}
-   Value: {token}
-
-3. Wait 5-30 mins for propagation.
-4. Reply /verifydomain {service_id} to check.
-
-Once verified, your site will be live at http://{domain} !
-(HTTPS coming soon)
-    """)
-    bot.send_message(config.ADMIN_ID, f"User {message.from_user.id} requested custom domain {domain} for {service_id}")
-
-@bot.message_handler(commands=['verifydomain'])
-@command_handler
-def handle_verifydomain(message: Message):
-    parts = message.text.split()
-    if len(parts) < 2:
-        bot.reply_to(message, "Usage: /verifydomain SERVICE_ID")
-        return
-    service_id = parts[1]
-    service = get_service(service_id)
-    if not service or service['user_id'] != message.from_user.id:
-        bot.reply_to(message, "Invalid service.")
-        return
-    
-    domain = service.get('custom_domain')
-    token = service.get('verification_token')
-    if not domain or not token:
-        bot.reply_to(message, "No pending domain request.")
-        return
-    
-    try:
-        answers = dns.resolver.resolve(f'_deployx-verify.{domain}', 'TXT')
-        for rdata in answers:
-            if token.encode() in rdata.strings[0]:
-                update_service_column(service_id, 'domain_verified', True)
-                create_nginx_config(service_id, domain, service['port'])
-                bot.reply_to(message, f"✅ Verified! Your site is now live at http://{domain}")
-                bot.send_message(config.ADMIN_ID, f"Custom domain verified: {domain} → service {service_id}")
-                return
-    except Exception:
-        pass
-    
-    bot.reply_to(message, "❌ Not verified yet. Check DNS propagation (try dnschecker.org) and try again in a few minutes.")
 
 
 # User commands
